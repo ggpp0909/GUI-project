@@ -1,8 +1,8 @@
 import sys
 import sqlite3
-from PyQt5.QtWidgets import QApplication, QMainWindow, QCalendarWidget, QLabel, QVBoxLayout, QWidget, QPushButton, QComboBox, QHBoxLayout, QGridLayout, QFrame, QLineEdit
+from PyQt5.QtWidgets import QDialog, QMessageBox, QApplication, QMainWindow, QCalendarWidget, QLabel, QVBoxLayout, QWidget, QPushButton, QComboBox, QHBoxLayout, QGridLayout, QFrame, QLineEdit
 from PyQt5.QtCore import QDate, Qt, QSettings, QSize, QPoint
-from PyQt5.QtGui import QColor, QPainter
+from PyQt5.QtGui import QColor, QPainter, QIcon, QPixmap, QIntValidator
 
 def load_query(query_name):
     with open('queries.sql', 'r') as file:
@@ -19,8 +19,12 @@ class WorkCalendar(QCalendarWidget):
     def __init__(self, parent=None):
         super().__init__(parent)
         self.work_hours = {}
+        self.work_types = {}  # 근무 유형 저장
         self.holidays = self.load_holidays()
         self.load_work_hours()
+        self.setNavigationBarVisible(False)  # 기본 네비게이션 바 숨기기
+
+
 
     def get_work_days_in_current_month(self, year, month):
         first_day = QDate(year, month, 1)
@@ -35,11 +39,33 @@ class WorkCalendar(QCalendarWidget):
                 work_days += 1
 
         return work_days
+    
 
     def paintCell(self, painter, rect, date):
         super().paintCell(painter, rect, date)
         date_str = date.toString("yyyy-MM-dd")
         
+        # 배경색을 초기화
+        painter.fillRect(rect, QColor('white'))
+
+        # 근무 유형에 따른 배경색 설정
+        if date_str in self.work_types:
+            work_type = self.work_types[date_str]
+            if work_type == "재택근무":
+                painter.fillRect(rect, QColor(0xE6, 0xFB, 0xEA))  # 연한 연두색
+            elif work_type == "연/월차":
+                painter.fillRect(rect, QColor(255, 219, 204))  # 연한 주황색
+            elif work_type == "오전반차":
+                painter.fillRect(rect, QColor(255, 255, 181))  # 연한 노랑색
+            elif work_type == "오후반차":
+                painter.fillRect(rect, QColor(255, 255, 181))  # 연한 노랑색
+            elif work_type == "출장":
+                painter.fillRect(rect, QColor(212, 240, 240))  # 연한 파랑색
+            elif work_type == "교육":
+                painter.fillRect(rect, QColor(236, 213, 227))  # 연한 보라색
+            elif work_type == "기타":
+                painter.fillRect(rect, QColor(236, 234, 228))  # 연한 회색
+
         # 기본 글씨 색상을 검정색으로 설정
         painter.setPen(QColor('black'))
 
@@ -54,9 +80,13 @@ class WorkCalendar(QCalendarWidget):
         # 근무 시간이 있는 경우, 근무 시간을 별도로 표시
         if date_str in self.work_hours:
             hours = self.work_hours[date_str]
-            work_hours_color = QColor('blue') if hours >= 8 else QColor('red')
+            if date_str in self.holidays or date.dayOfWeek() in (6, 7):  # 휴일 및 주말 근무 시간은 파란 글씨로 표시
+                work_hours_color = QColor('blue')
+            else:
+                work_hours_color = QColor('blue') if hours >= 8 else QColor('red')
             painter.setPen(work_hours_color)
-            painter.drawText(rect, Qt.AlignBottom | Qt.AlignRight, f"{hours}h")
+            painter.drawText(rect, Qt.AlignBottom | Qt.AlignRight, f"{hours:.2f}h")
+
 
     def load_work_hours(self):
         try:
@@ -65,14 +95,18 @@ class WorkCalendar(QCalendarWidget):
             query = load_query('Select all work hours')
             cursor.execute(query)
             records = cursor.fetchall()
-            for date, start_time, end_time in records:
+            for date, start_time, end_time, work_type in records:
                 start_hour = int(start_time.split(':')[0])
                 end_hour = int(end_time.split(':')[0])
-                hours = end_hour - start_hour - 1
+                start_minute = int(start_time.split(':')[1])
+                end_minute = int(end_time.split(':')[1])
+                hours = (end_hour + end_minute / 60) - (start_hour + start_minute / 60) - 1
                 self.work_hours[date] = hours
+                self.work_types[date] = work_type  # 근무 유형 저장
             conn.close()
         except sqlite3.Error as e:
             print(f"Database error: {e}")
+
 
     def load_holidays(self):
         holidays = set()
@@ -88,6 +122,7 @@ class WorkCalendar(QCalendarWidget):
         except sqlite3.Error as e:
             print(f"Database error: {e}")
         return holidays
+    
 class WorkHoursManager(QMainWindow):
     def __init__(self):
         super().__init__()
@@ -107,6 +142,12 @@ class WorkHoursManager(QMainWindow):
         self.work_type_combo = QComboBox(self)  # 근무 유형 드롭다운 추가
         self.work_type_combo.addItem("일반근무")
         self.work_type_combo.addItem("재택근무")
+        self.work_type_combo.addItem("연/월차")
+        self.work_type_combo.addItem("오전반차")
+        self.work_type_combo.addItem("오후반차")
+        self.work_type_combo.addItem("출장")
+        self.work_type_combo.addItem("교육")
+        self.work_type_combo.addItem("기타")
 
         self.start_time_combo = QComboBox(self)
         self.end_time_combo = QComboBox(self)
@@ -138,20 +179,53 @@ class WorkHoursManager(QMainWindow):
         self.remove_holiday_button.clicked.connect(self.remove_holiday)
 
         self.total_hours_label = QLabel("Total Hours: 0")
-        self.valance_label = QLabel("Valance: 0")
+        self.balance_label = QLabel("Valance: 0")
         self.remaining_days_label = QLabel("Remaining Leave: 0")
         self.Required_label = QLabel("Required: 0")
+
+        # 연도와 달을 선택할 수 있는 드롭다운 메뉴 추가
+        self.year_combo = QComboBox(self)
+        self.month_combo = QComboBox(self)
+
+        for year in range(2000, 2101):
+            self.year_combo.addItem(str(year))
+
+        for month in range(1, 13):
+            self.month_combo.addItem(f"{month:02}")
+
+        self.year_combo.setCurrentText(str(QDate.currentDate().year()))
+        self.month_combo.setCurrentIndex(QDate.currentDate().month() - 1)
+
+        self.year_combo.currentTextChanged.connect(self.update_calendar)
+        self.month_combo.currentIndexChanged.connect(self.update_calendar)
+
+        # 이전 달, 다음 달로 이동하는 버튼 추가
+        self.prev_month_button = QPushButton("<", self)
+        self.prev_month_button.clicked.connect(self.show_prev_month)
+
+        self.next_month_button = QPushButton(">", self)
+        self.next_month_button.clicked.connect(self.show_next_month)
 
         # 현재 달로 돌아오는 버튼 추가
         self.current_month_button = QPushButton("TODAY", self)
         self.current_month_button.clicked.connect(self.show_current_month)
 
-        main_layout = QVBoxLayout()
-        top_layout = QHBoxLayout()
-        top_layout.addWidget(QLabel(f"{QDate.currentDate().toString('MMMM yyyy')}", self))
-        top_layout.addWidget(self.current_month_button)  # 버튼 추가
-        top_layout.addStretch()
+        # 톱니바퀴 버튼 추가
+        self.settings_button = QPushButton(self)
+        self.settings_button.setIcon(QIcon('static/setting_icon.png'))  # 아이콘 파일 경로 설정
+        self.settings_button.clicked.connect(self.open_settings)
 
+        # 톱니바퀴 버튼을 오른쪽 상단에 배치
+        top_layout = QHBoxLayout()
+        top_layout.addWidget(self.prev_month_button)
+        top_layout.addWidget(self.next_month_button)
+        top_layout.addWidget(self.year_combo)
+        top_layout.addWidget(self.month_combo)
+        top_layout.addStretch()
+        top_layout.addWidget(self.current_month_button)
+        top_layout.addWidget(self.settings_button)
+
+        main_layout = QVBoxLayout()
         main_layout.addLayout(top_layout)
         main_layout.addWidget(self.calendar)
 
@@ -183,7 +257,7 @@ class WorkHoursManager(QMainWindow):
         info_layout = QVBoxLayout()
         info_layout.addWidget(self.total_hours_label)
         info_layout.addWidget(self.remaining_days_label)
-        info_layout.addWidget(self.valance_label)
+        info_layout.addWidget(self.balance_label)
         info_layout.addWidget(self.Required_label)
         
         main_layout.addLayout(info_layout)
@@ -196,6 +270,37 @@ class WorkHoursManager(QMainWindow):
         self.calendar.currentPageChanged.connect(self.on_page_changed)  # 달력 페이지가 변경될 때 on_page_changed 호출
 
         self.show_date(self.calendar.selectedDate())
+        self.load_remaining_leave()
+
+
+    def open_settings(self):
+        settings_dialog = SettingsDialog(self)
+        settings_dialog.exec_()
+
+    def show_prev_month(self):
+        current_date = self.calendar.selectedDate()
+        prev_month_date = current_date.addMonths(-1)
+        self.year_combo.setCurrentText(str(prev_month_date.year()))
+        self.month_combo.setCurrentIndex(prev_month_date.month() - 1)
+        self.calendar.setSelectedDate(prev_month_date)
+        self.calendar.showSelectedDate()
+        self.update_calendar()
+
+    def show_next_month(self):
+        current_date = self.calendar.selectedDate()
+        next_month_date = current_date.addMonths(1)
+        self.year_combo.setCurrentText(str(next_month_date.year()))
+        self.month_combo.setCurrentIndex(next_month_date.month() - 1)
+        self.calendar.setSelectedDate(next_month_date)
+        self.calendar.showSelectedDate()
+        self.update_calendar()
+
+    def update_calendar(self):
+        year = int(self.year_combo.currentText())
+        month = self.month_combo.currentIndex() + 1
+        new_date = QDate(year, month, 1)
+        self.calendar.setSelectedDate(new_date)
+        self.calendar.showSelectedDate()
         self.update_info()
 
 
@@ -219,7 +324,8 @@ class WorkHoursManager(QMainWindow):
         self.cursor = self.conn.cursor()
         queries = [
             'Create tables',
-            'Create holidays table',  # holidays 테이블 생성 쿼리 추가
+            'Create holidays table',
+            'Create settings table'  # settings 테이블 생성 쿼리 추가
         ]
         for query_name in queries:
             query = load_query(query_name)
@@ -227,16 +333,16 @@ class WorkHoursManager(QMainWindow):
         self.conn.commit()
 
     def show_date(self, date):
-        self.label.setText(date.toString())
-        self.work_type_combo.setCurrentText("일반근무")
-        self.start_time_combo.setCurrentText("08:00")
-        self.end_time_combo.setCurrentText("17:00")
+        formatted_date = date.toString("yyyy-MM-dd dddd")
+        self.label.setText(formatted_date)
 
-        start_time, end_time = self.load_work_hours(date)
+        start_time, end_time, work_type = self.load_work_hours(date)
         self.start_time_combo.setCurrentText(start_time if start_time else "08:00")
         self.end_time_combo.setCurrentText(end_time if end_time else "17:00")
-        
+        self.work_type_combo.setCurrentText(work_type if work_type else "일반근무")
+
         self.update_info()  # 날짜를 표시할 때마다 정보 업데이트
+
 
     def on_page_changed(self):
         selected_date = self.calendar.selectedDate()
@@ -253,32 +359,73 @@ class WorkHoursManager(QMainWindow):
         start_time = self.start_time_combo.currentText()
         end_time = self.end_time_combo.currentText()
         if date and start_time and end_time:
+            previous_work_type = self.load_work_hours(self.calendar.selectedDate())[2]
+            self.adjust_remaining_leave(previous_work_type, undo=True)  # 이전 근무 타입에 따른 남은 휴가 복원
+
             query = load_query('Insert or replace work hours')
             self.cursor.execute(query, (date, start_time, end_time, work_type))
             self.conn.commit()
             self.calendar.load_work_hours()
             self.calendar.updateCells()
             self.label.setText(f"Saved: {date} - {work_type} - {start_time} to {end_time}")
+
+            self.adjust_remaining_leave(work_type, undo=False)  # 새 근무 타입에 따른 남은 휴가 반영
+
             self.update_info()
+
+
 
     def delete_work_hours(self):
         date = self.calendar.selectedDate().toString("yyyy-MM-dd")
+        previous_work_type = self.load_work_hours(self.calendar.selectedDate())[2]
         if date:
             query = load_query('Delete work hours')
             self.cursor.execute(query, (date,))
             self.conn.commit()
             self.calendar.load_work_hours()
             self.calendar.work_hours.pop(date, None)  # 즉시 삭제 반영
+            self.calendar.work_types.pop(date, None)  # 근무 유형도 삭제 반영
             self.calendar.updateCells()  # UI 즉시 갱신
             self.label.setText(f"Deleted work hours for {date}")
+
+            self.adjust_remaining_leave(previous_work_type, undo=True)  # 이전 근무 타입에 따른 남은 휴가 복원
+
             self.update_info()
+
+    def adjust_remaining_leave(self, work_type, undo=False):
+        current_leave = float(self.remaining_days_label.text().split(":")[1].strip())
+        adjustment = 0
+        if work_type == "연/월차":
+            adjustment = 1
+        elif work_type == "오전반차" or work_type == "오후반차":
+            adjustment = 0.5
+
+        if undo:
+            adjustment = -adjustment
+
+        new_leave = current_leave - adjustment
+        self.update_remaining_leave(new_leave)
+
+
+    def load_remaining_leave(self):
+        try:
+            conn = sqlite3.connect('work_hours.db')
+            cursor = conn.cursor()
+            query = load_query('Select remaining leave')
+            cursor.execute(query)
+            result = cursor.fetchone()
+            if result:
+                self.remaining_days_label.setText(f"Remaining Leave: {float(result[0]):.2f}")
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
 
     def load_work_hours(self, date):
         date_str = date.toString("yyyy-MM-dd")  # QDate 객체를 문자열로 변환
         query = load_query('Select work hours for a specific date')
         self.cursor.execute(query, (date_str,))
         result = self.cursor.fetchone()
-        return result if result else (None, None)
+        return result if result else (None, None, None)
 
     def add_holiday(self):
         date = self.calendar.selectedDate().toString("yyyy-MM-dd")
@@ -315,24 +462,187 @@ class WorkHoursManager(QMainWindow):
             date: hours for date, hours in self.calendar.work_hours.items()
             if QDate.fromString(date, "yyyy-MM-dd").year() == year and QDate.fromString(date, "yyyy-MM-dd").month() == month
         }
-        
-        total_hours = sum(current_month_hours.values())
-        valance = total_hours - len(current_month_hours) * 8
-        required = self.calendar.get_work_days_in_current_month(year, month) * 8
 
-        self.total_hours_label.setText(f"Total Hours: {total_hours}")
-        self.valance_label.setText(f"Valance: {valance}")
-        self.Required_label.setText(f"Required: {required}")
+        total_hours = sum(current_month_hours.values())
+        work_days = self.calendar.get_work_days_in_current_month(year, month)
+
+        # balance 계산 수정
+        balance = 0
+        for date, hours in current_month_hours.items():
+            qdate = QDate.fromString(date, "yyyy-MM-dd")
+            if date in self.calendar.holidays or qdate.dayOfWeek() in (6, 7):  # 휴일 및 주말 근무 시간
+                balance += hours
+            else:
+                balance += (hours - 8) if hours != 0 else -8
+
+        required = work_days * 8
+
+        self.total_hours_label.setText(f"Total Hours: {total_hours:.2f}")
+        self.balance_label.setText(f"balance: {balance:.2f}")
+        self.Required_label.setText(f"Required: {required:.2f}")
         # 나중에 연월차 관련 정보 업데이트
-        # self.remaining_days_label.setText(f"Remaining Leave: {remaining_leave}")
+
+    def load_remaining_leave(self):
+        try:
+            conn = sqlite3.connect('work_hours.db')
+            cursor = conn.cursor()
+            query = load_query('Select remaining leave')
+            cursor.execute(query)
+            result = cursor.fetchone()
+            if result:
+                self.remaining_days_label.setText(f"Remaining Leave: {result[0]}")
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+
+    def update_remaining_leave(self, remaining_leave):
+        remaining_leave = float(remaining_leave)  # 문자열을 float으로 변환
+        self.remaining_days_label.setText(f"Remaining Leave: {remaining_leave:.2f}")
+        try:
+            conn = sqlite3.connect('work_hours.db')
+            cursor = conn.cursor()
+            query = load_query('Insert or replace remaining leave')
+            cursor.execute(query, (remaining_leave,))
+            conn.commit()
+            conn.close()
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+
 
     def closeEvent(self, event):
         self.save_window_settings()
         self.conn.close()
         event.accept()
 
+
+def load_query(query_name):
+    with open('queries.sql', 'r') as file:
+        queries = file.read().split(';')
+        query_dict = {}
+        for query in queries:
+            if query.strip():
+                lines = query.strip().split('\n')
+                name = lines[0].strip().lstrip('-- ')
+                query_dict[name] = '\n'.join(lines[1:]).strip()
+        return query_dict[query_name]
+    
+class SettingsDialog(QDialog):
+    def __init__(self, parent=None):
+        super().__init__(parent)
+        self.parent = parent  # 부모 윈도우 저장
+
+        self.setWindowTitle("Settings")
+
+        self.layout = QVBoxLayout()
+
+        self.label = QLabel("남은 휴가일 수:")
+        self.remaining_leave_input = QLineEdit()
+        self.save_button = QPushButton("Save")
+        self.save_button.clicked.connect(self.save_settings)
+
+        self.reset_button = QPushButton("Data Reset")
+        self.reset_button.setStyleSheet("background-color: red; color: white;")
+        self.reset_button.clicked.connect(self.confirm_reset)
+
+        self.layout.addWidget(self.label)
+        self.layout.addWidget(self.remaining_leave_input)
+        self.layout.addWidget(self.save_button)
+        self.layout.addWidget(self.reset_button)
+
+        self.setLayout(self.layout)
+
+        # Load current remaining leave from the database
+    def save_settings(self):
+        # 설정 저장 로직을 여기에 추가
+        remaining_leave = self.remaining_leave_input.text()
+        try:
+            remaining_leave = float(remaining_leave)  # 문자열을 float으로 변환
+            conn = sqlite3.connect('work_hours.db')
+            cursor = conn.cursor()
+            query = load_query('Insert or replace remaining leave')
+            cursor.execute(query, (remaining_leave,))
+            conn.commit()
+            conn.close()
+            print(f"Remaining leave days saved: {remaining_leave}")
+
+            # 부모 윈도우의 remaining leave 업데이트
+            self.parent.update_remaining_leave(remaining_leave)
+
+        except ValueError as e:
+            print(f"Value error: {e}")
+        except sqlite3.Error as e:
+            print(f"Database error: {e}")
+
+        self.accept()
+
+
+    def confirm_reset(self):
+        reply = QMessageBox.question(self, 'Data Reset Confirmation',
+                                     '정말로 데이터를 리셋하시겠습니까? 리셋된 데이터는 복구할 수 없습니다.',
+                                     QMessageBox.Yes | QMessageBox.No, QMessageBox.No)
+
+        if reply == QMessageBox.Yes:
+            self.reset_data()
+
+    def reset_data(self):
+        # 데이터베이스 초기화 로직
+        conn = sqlite3.connect('work_hours.db')
+        cursor = conn.cursor()
+
+        # Drop tables
+        cursor.execute(load_query('Drop work_hours table'))
+        cursor.execute(load_query('Drop holidays table'))
+        cursor.execute("DROP TABLE IF EXISTS settings")
+
+        # Recreate tables
+        cursor.execute(load_query('Create tables'))
+        cursor.execute(load_query('Create holidays table'))
+        cursor.execute(load_query('Create settings table'))
+
+        conn.commit()
+        conn.close()
+        print("Data has been reset.")
+
+        # 부모 윈도우의 달력 갱신
+        self.parent.calendar.work_hours.clear()
+        self.parent.calendar.holidays.clear()
+        self.parent.calendar.work_types.clear()
+        self.parent.calendar.updateCells()
+
+        # 남은 휴가일 수 초기화
+        self.parent.update_remaining_leave(0.0)
+
+        self.accept()
+
+
+
+
+# WorkHoursManager 클래스에서 SettingsDialog를 열 때 부모를 전달
+def open_settings(self):
+    settings_dialog = SettingsDialog(self)
+    settings_dialog.exec_()
+
+def load_query(query_name):
+    with open('queries.sql', 'r') as file:
+        queries = file.read().split(';')
+        query_dict = {}
+        for query in queries:
+            if query.strip():
+                lines = query.strip().split('\n')
+                name = lines[0].strip().lstrip('-- ')
+                query_dict[name] = '\n'.join(lines[1:]).strip()
+        return query_dict[query_name]
+
+
+
 if __name__ == "__main__":
     app = QApplication(sys.argv)
+    
+    # 고해상도 아이콘 설정
+    icon = QIcon()
+    icon.addPixmap(QPixmap('static/app_icon.png'), QIcon.Normal, QIcon.On)
+    app.setWindowIcon(icon)
+
     window = WorkHoursManager()
     window.show()
     sys.exit(app.exec_())
