@@ -1,5 +1,6 @@
 import sys
 import sqlite3
+import os
 from PyQt5.QtWidgets import QDialog, QMessageBox, QApplication, QMainWindow, QGroupBox, QCalendarWidget, QLabel, QVBoxLayout, QWidget, QPushButton, QComboBox, QHBoxLayout, QGridLayout, QFrame, QLineEdit
 from PyQt5.QtCore import QDate, Qt, QSettings, QSize, QPoint
 from PyQt5.QtGui import QColor, QPainter, QIcon, QPixmap, QIntValidator
@@ -352,17 +353,20 @@ class WorkHoursManager(QMainWindow):
         settings.setValue('windowPos', self.pos())
 
     def init_db(self):
-        self.conn = sqlite3.connect('work_hours.db')
+        db_path = 'work_hours.db'
+        db_exists = os.path.exists(db_path)
+        self.conn = sqlite3.connect(db_path)
         self.cursor = self.conn.cursor()
-        queries = [
-            'Create tables',
-            'Create holidays table',
-            'Create settings table'  # settings 테이블 생성 쿼리 추가
-        ]
-        for query_name in queries:
-            query = load_query(query_name)
-            self.cursor.execute(query)
-        self.conn.commit()
+        if not db_exists:
+            queries = [
+                'Create tables',
+                'Create holidays table',
+                'Create settings table'
+            ]
+            for query_name in queries:
+                query = load_query(query_name)
+                self.cursor.execute(query)
+            self.conn.commit()
 
     def show_date(self, date):
         formatted_date = date.toString("yyyy-MM-dd dddd")
@@ -404,7 +408,7 @@ class WorkHoursManager(QMainWindow):
         end_time = self.end_time_combo.currentText()
         if date and start_time and end_time:
             previous_work_type = self.load_work_hours(self.calendar.selectedDate())[2]
-            self.adjust_remaining_leave(previous_work_type, undo=True)  # 이전 근무 타입에 따른 남은 휴가 복원
+            self.adjust_remaining_leave(previous_work_type, undo=False)  # 이전 근무 타입에 따른 남은 휴가 복원
 
             query = load_query('Insert or replace work hours')
             self.cursor.execute(query, (date, start_time, end_time, work_type))
@@ -414,12 +418,12 @@ class WorkHoursManager(QMainWindow):
 
             # balance와 모든 근무일에 근무시간이 등록되었는지 확인
             balance, all_days_worked = self.update_balance_and_leave()
-            if all_days_worked and balance >= 0:
+            if all_days_worked and balance >= 0 and date not in self.calendar.holidays:
                 self.adjust_remaining_leave("increment")
 
             self.label.setText(f"Saved: {date} - {work_type} - {start_time} to {end_time}")
 
-            self.adjust_remaining_leave(work_type, undo=False)  # 새 근무 타입에 따른 남은 휴가 반영
+            self.adjust_remaining_leave(work_type, undo=True)  # 새 근무 타입에 따른 남은 휴가 반영
 
             self.update_info()
 
@@ -430,7 +434,7 @@ class WorkHoursManager(QMainWindow):
         if date:
             # balance와 모든 근무일에 근무시간이 등록되었는지 확인
             balance, all_days_worked = self.update_balance_and_leave()
-            if all_days_worked and balance >= 0:
+            if all_days_worked and balance >= 0 and date not in self.calendar.holidays:
                 self.adjust_remaining_leave("decrement")
 
             query = load_query('Delete work hours')
@@ -442,7 +446,7 @@ class WorkHoursManager(QMainWindow):
             self.calendar.updateCells()  # UI 즉시 갱신
             self.label.setText(f"Deleted work hours for {date}")
 
-            self.adjust_remaining_leave(previous_work_type, undo=True)  # 이전 근무 타입에 따른 남은 휴가 복원
+            self.adjust_remaining_leave(previous_work_type, undo=False)  # 이전 근무 타입에 따른 남은 휴가 복원
 
             self.update_info()
 
@@ -606,7 +610,7 @@ class WorkHoursManager(QMainWindow):
 
     def update_remaining_leave(self, remaining_leave):
         remaining_leave = float(remaining_leave)  # 문자열을 float으로 변환
-        self.remaining_days_label.setText(f"Remaining Leave: {format_number(remaining_leave)}")
+        self.remaining_days_label.setText(f"남은 연/월차: {format_number(remaining_leave)}")
         try:
             conn = sqlite3.connect('work_hours.db')
             cursor = conn.cursor()
