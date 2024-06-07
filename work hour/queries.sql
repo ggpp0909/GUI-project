@@ -12,7 +12,6 @@ CREATE TABLE IF NOT EXISTS holidays (
     description TEXT
 );
 
-
 -- Create settings table
 CREATE TABLE IF NOT EXISTS settings (
     key TEXT PRIMARY KEY,
@@ -20,25 +19,37 @@ CREATE TABLE IF NOT EXISTS settings (
 );
 
 -- Insert or replace work hours
-INSERT OR REPLACE INTO work_hours (date, start_time, end_time, work_type) VALUES (?, ?, ?, ?);
+INSERT OR REPLACE INTO work_hours (date, start_time, end_time, work_type)
+VALUES (?, ?, ?, ?);
+
+-- Select all work hours
+SELECT * FROM work_hours;
+
+-- Select work hours for a specific date
+SELECT start_time, end_time, work_type FROM work_hours WHERE date = ?;
 
 -- Delete work hours
 DELETE FROM work_hours WHERE date = ?;
 
--- Insert or ignore holiday
-INSERT OR IGNORE INTO holidays (date, description) VALUES (?, ?);
+-- Insert or replace holiday
+INSERT OR REPLACE INTO holidays (date, description)
+VALUES (?, ?);
+
+-- Select all holidays
+SELECT * FROM holidays;
 
 -- Delete holiday
 DELETE FROM holidays WHERE date = ?;
 
--- Select all work hours
-SELECT date, start_time, end_time, work_type FROM work_hours;
+-- Select holiday description for a specific date
+SELECT description FROM holidays WHERE date = ?;
 
--- Select all holidays
-SELECT date FROM holidays;
+-- Insert or replace remaining leave
+INSERT OR REPLACE INTO settings (key, value)
+VALUES ('remaining_leave', ?);
 
--- Select work hours for a specific date
-SELECT start_time, end_time, work_type FROM work_hours WHERE date = ?;
+-- Select remaining leave
+SELECT value FROM settings WHERE key = 'remaining_leave';
 
 -- Drop work_hours table
 DROP TABLE IF EXISTS work_hours;
@@ -46,9 +57,5 @@ DROP TABLE IF EXISTS work_hours;
 -- Drop holidays table
 DROP TABLE IF EXISTS holidays;
 
-
--- Select remaining leave
-SELECT value FROM settings WHERE key = 'remaining_leave';
-
--- Insert or replace remaining leave
-INSERT OR REPLACE INTO settings (key, value) VALUES ('remaining_leave', ?);
+-- Drop settings table
+DROP TABLE IF EXISTS settings;
