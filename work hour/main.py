@@ -51,7 +51,7 @@ class WorkCalendar(QCalendarWidget):
     def paintCell(self, painter, rect, date):
         super().paintCell(painter, rect, date)
         date_str = date.toString("yyyy-MM-dd")
-        
+
         # 배경색을 초기화
         painter.fillRect(rect, QColor('white'))
 
@@ -61,6 +61,7 @@ class WorkCalendar(QCalendarWidget):
             painter.setOpacity(0.3)
         else:
             painter.setOpacity(1.0)
+
 
         # 근무 유형에 따른 배경색 설정
         if date_str in self.work_types:
@@ -101,6 +102,14 @@ class WorkCalendar(QCalendarWidget):
             painter.setPen(work_hours_color)
             painter.drawText(rect, Qt.AlignBottom | Qt.AlignRight, f"{hours:.2f}")
 
+
+        # 선택된 날짜 강조
+        if date == self.selectedDate():
+            pen = painter.pen()
+            pen.setWidth(2)  # 테두리 두께 설정
+            pen.setColor(QColor(0, 0, 0))  # 파란색 테두리
+            painter.setPen(pen)
+            painter.drawRect(rect.adjusted(1, 1, -1, -1))  # 테두리를 그립니다.
         # Opacity를 원래대로 복원
         painter.setOpacity(1.0)
 
